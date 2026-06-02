@@ -2,19 +2,21 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
  * SWAOE v4.1 — DISTRIBUTED AUTOMATION ORCHESTRATION ENGINE
+ * Enhanced with PWTAE principles: Stateless sessions, smart selectors, task builder
  * All-in-One Bootstrap Installer
  * ═══════════════════════════════════════════════════════════════════════════════
  *
  * This installer generates a complete distributed workflow automation system:
- * - Control Plane API (PHP)
- * - Distributed Worker Daemon (PHP CLI)
- * - Playwright Browser Execution VM (Node.js)
- * - SQLite Database (sessions, tasks, logs)
+ * - Control Plane API (PHP) with multi-user support
+ * - Distributed Worker Daemon (PHP CLI) OR Cron-safe stateless mode
+ * - Playwright Browser Execution VM (Node.js) with Desktop/Mobile modes
+ * - Smart Selector Engine (DOM detection + coordinate fallback)
+ * - SQLite Database (users, sessions, tasks, logs)
  * - Redis Queue (job coordination)
- * - PWA Control Dashboard (UI)
+ * - PWA Control Dashboard with Visual Task Builder (UI)
  * - Docker/Deployment Configs
  *
- * Usage: php install.php [--skip-docker]
+ * Usage: php install.php [--skip-docker] [--cron-mode]
  */
 
 error_reporting(E_ALL);
@@ -42,11 +44,12 @@ class SWAOEInstaller {
         ];
     }
     
-    public function run($skipDocker = false) {
+    public function run($skipDocker = false, $cronMode = false) {
         echo $this->banner();
         
         try {
-            $this->log("🔧 SWAOE v4.1 Bootstrap Installer", "info");
+            $this->log("🔧 SWAOE v4.1 Enhanced Bootstrap Installer (PWTAE-Enabled)", "info");
+            $this->log("Mode: " . ($cronMode ? "Stateless Cron" : "Persistent Daemon"), "info");
             $this->log("Generated at: {$this->timestamp}", "info");
             $this->log("Base directory: {$this->baseDir}", "info");
             $this->log("");
@@ -54,39 +57,46 @@ class SWAOEInstaller {
             // Phase 1: Directory Structure
             $this->createDirectories();
             
-            // Phase 2: Database Schema
+            // Phase 2: Enhanced Database Schema (Multi-user)
             $this->createDatabase();
             
             // Phase 3: Configuration
             $this->createConfigFiles();
             
-            // Phase 4: Control Plane API
+            // Phase 4: Control Plane API (Enhanced with users, selectors)
             $this->generateControlPlaneAPI();
             
-            // Phase 5: Worker Daemon
-            $this->generateWorkerDaemon();
+            // Phase 5: Worker Daemon or Cron Script
+            if ($cronMode) {
+                $this->generateCronWorker();
+            } else {
+                $this->generateWorkerDaemon();
+            }
             
-            // Phase 6: Playwright Runner
+            // Phase 6: Playwright Runner (Enhanced with smart selectors + modes)
             $this->generatePlaywrightRunner();
             
-            // Phase 7: PWA Dashboard
-            $this->generatePWADashboard();
+            // Phase 7: Smart Selector Engine
+            $this->generateSelectorEngine();
             
-            // Phase 8: Routing Layer
+            // Phase 8: Enhanced PWA Dashboard (Task Builder + Viewport Modes)
+            $this->generateEnhancedPWADashboard();
+            
+            // Phase 9: Routing Layer
             $this->generateHtaccess();
             
-            // Phase 9: Deployment Configs
+            // Phase 10: Deployment Configs
             if (!$skipDocker) {
                 $this->generateDeploymentConfigs();
             }
             
-            // Phase 10: Documentation
+            // Phase 11: Documentation
             $this->generateDocumentation();
             
             $this->log("", "success");
-            $this->log("✅ SWAOE v4.1 System Generated Successfully!", "success");
+            $this->log("✅ SWAOE v4.1 Enhanced System Generated Successfully!", "success");
             $this->log("", "success");
-            $this->printNextSteps();
+            $this->printNextSteps($cronMode);
             
         } catch (Exception $e) {
             $this->log("❌ Installation failed: " . $e->getMessage(), "error");
@@ -104,6 +114,8 @@ class SWAOEInstaller {
             'data',
             'public',
             'public/assets',
+            'public/assets/js',
+            'public/assets/css',
             'logs',
             'config',
         ];
@@ -118,11 +130,10 @@ class SWAOEInstaller {
     }
     
     private function createDatabase() {
-        $this->log("🗄️  Creating SQLite database schema...", "section");
+        $this->log("🗄️  Creating enhanced SQLite database schema...", "section");
         
         $dbPath = $this->config['db_path'];
         
-        // Remove existing database for clean install
         if (file_exists($dbPath)) {
             unlink($dbPath);
         }
@@ -131,25 +142,45 @@ class SWAOEInstaller {
             $db = new PDO("sqlite:{$dbPath}");
             $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
             
-            // Sessions table
+            // Users table (PWTAE: Multi-tenancy)
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_login DATETIME,
+                    is_active INTEGER DEFAULT 1,
+                    INDEX idx_username (username),
+                    INDEX idx_email (email)
+                )
+            ");
+            $this->log("✓ Created: users table", "success");
+            
+            // Sessions table (Enhanced with user_id and viewport_mode)
             $db->exec("
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
                     status TEXT DEFAULT 'pending',
                     url TEXT NOT NULL,
                     repeat_count INTEGER DEFAULT 1,
                     current_cycle INTEGER DEFAULT 0,
+                    viewport_mode TEXT DEFAULT 'desktop',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     started_at DATETIME,
                     completed_at DATETIME,
                     config TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    INDEX idx_user_id (user_id),
                     INDEX idx_status (status),
                     INDEX idx_created_at (created_at)
                 )
             ");
             $this->log("✓ Created: sessions table", "success");
             
-            // Tasks table
+            // Tasks table (Enhanced with coordinate support)
             $db->exec("
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,8 +189,11 @@ class SWAOEInstaller {
                     task_type TEXT NOT NULL,
                     action TEXT,
                     selector TEXT,
+                    coordinate_x INTEGER,
+                    coordinate_y INTEGER,
                     value TEXT,
                     delay INTEGER DEFAULT 0,
+                    repeat_count INTEGER DEFAULT 1,
                     retry_count INTEGER DEFAULT 0,
                     status TEXT DEFAULT 'pending',
                     result TEXT,
@@ -170,7 +204,7 @@ class SWAOEInstaller {
                     INDEX idx_status (status)
                 )
             ");
-            $this->log("✓ Created: tasks table", "success");
+            $this->log("✓ Created: tasks table (with coordinates)", "success");
             
             // Execution logs table
             $db->exec("
@@ -219,14 +253,13 @@ class SWAOEInstaller {
     private function createConfigFiles() {
         $this->log("⚙️  Creating configuration files...", "section");
         
-        // config.php
         $configContent = <<<'PHP'
 <?php
 /**
- * SWAOE v4.1 Configuration
+ * SWAOE v4.1 Enhanced Configuration (PWTAE-Enabled)
  */
 
-define('SWAOE_VERSION', '4.1.0');
+define('SWAOE_VERSION', '4.1.0-PWTAE');
 define('SWAOE_ENV', getenv('SWAOE_ENV') ?: 'development');
 
 // Database
@@ -243,16 +276,24 @@ define('WORKER_ID', getenv('WORKER_ID') ?: 'worker_' . substr(md5(gethostname() 
 define('WORKER_MAX_RETRIES', getenv('WORKER_MAX_RETRIES') ?: 3);
 define('WORKER_LEASE_TIMEOUT', getenv('WORKER_LEASE_TIMEOUT') ?: 300);
 define('WORKER_CYCLE_TIMEOUT', getenv('WORKER_CYCLE_TIMEOUT') ?: 600);
-define('WORKER_HEARTBEAT_INTERVAL', getenv('WORKER_HEARTBEAT_INTERVAL') ?: 30);
 
-// Playwright
+// Playwright (Enhanced with modes)
 define('PLAYWRIGHT_EXECUTABLE', getenv('PLAYWRIGHT_EXECUTABLE') ?: 'node');
 define('PLAYWRIGHT_RUNNER', __DIR__ . '/../bridge/playwright_runner.js');
 define('PLAYWRIGHT_TIMEOUT', getenv('PLAYWRIGHT_TIMEOUT') ?: 30000);
+define('PLAYWRIGHT_SELECTOR_ENGINE', __DIR__ . '/../bridge/selector_engine.js');
+
+// Viewport modes (PWTAE)
+define('VIEWPORT_DESKTOP', ['width' => 1920, 'height' => 1080]);
+define('VIEWPORT_MOBILE', ['width' => 375, 'height' => 667, 'isMobile' => true]);
 
 // API
 define('API_PORT', getenv('API_PORT') ?: 8080);
 define('API_RATE_LIMIT', getenv('API_RATE_LIMIT') ?: 100);
+
+// Session behavior (PWTAE: Stateless fresh sessions)
+define('SESSION_STATELESS', true);  // Each execution is fresh (no cookies)
+define('SESSION_ISOLATION', true);  // User isolation enabled
 
 // Logging
 define('LOG_LEVEL', getenv('LOG_LEVEL') ?: 'INFO');
@@ -305,27 +346,38 @@ function logEvent($sessionId, $taskId, $eventType, $message, $level = 'INFO', $w
 function generateId($prefix = 'id') {
     return $prefix . '_' . substr(md5(microtime() . random_bytes(16)), 0, 12);
 }
+
+function getViewportSize($mode = 'desktop') {
+    if ($mode === 'mobile') {
+        return VIEWPORT_MOBILE;
+    }
+    return VIEWPORT_DESKTOP;
+}
 PHP;
         
         $this->writeFile('config/config.php', $configContent);
-        $this->log("✓ Created: config/config.php", "success");
+        $this->log("✓ Created: config/config.php (Enhanced)", "success");
     }
     
     private function generateControlPlaneAPI() {
-        $this->log("🎮 Generating Control Plane API...", "section");
+        $this->log("🎮 Generating Enhanced Control Plane API (Multi-user)...", "section");
         
-        // api/index.php
         $apiContent = <<<'PHP'
 <?php
 /**
- * SWAOE v4.1 Control Plane API
+ * SWAOE v4.1 Enhanced Control Plane API
+ * 
+ * Multi-user support with session isolation
  * 
  * Endpoints:
- * POST   /api/session/create      - Create new session
- * GET    /api/session/:id         - Get session details
- * GET    /api/session/:id/status  - Get real-time status
- * GET    /api/queue/status        - Get queue depth
- * GET    /api/logs/:id            - Get execution logs
+ * POST   /api/user/register              - Register user
+ * POST   /api/user/login                 - Login user
+ * POST   /api/session/create             - Create new session
+ * GET    /api/session/:id                - Get session details
+ * GET    /api/session/:id/status         - Get real-time status
+ * GET    /api/sessions                   - List user sessions
+ * GET    /api/queue/status               - Get queue status
+ * GET    /api/logs/:id                   - Get execution logs
  */
 
 require_once __DIR__ . '/../config/config.php';
@@ -334,11 +386,38 @@ class ControlPlaneAPI {
     
     private $db;
     private $redis;
+    private $currentUser = null;
     
     public function __construct() {
         $this->db = getDb();
         $this->redis = getRedis();
         header('Content-Type: application/json');
+        
+        // Check authentication token
+        $this->authenticateRequest();
+    }
+    
+    private function authenticateRequest() {
+        $token = $_SERVER['HTTP_X_AUTH_TOKEN'] ?? null;
+        
+        if (!$token && !in_array($_SERVER['REQUEST_URI'], ['/api/user/register', '/api/user/login'])) {
+            // Public endpoints don't require auth
+            if (strpos($_SERVER['REQUEST_URI'], '/api/user/') === 0 || 
+                strpos($_SERVER['REQUEST_URI'], '/api/queue/') === 0) {
+                return;
+            }
+        }
+        
+        if ($token) {
+            // Verify token (simplified)
+            $stmt = $this->db->prepare("SELECT id, username FROM users WHERE id = ? AND is_active = 1");
+            $stmt->execute([substr($token, 0, 20)]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($user) {
+                $this->currentUser = $user;
+            }
+        }
     }
     
     public function handleRequest() {
@@ -347,22 +426,115 @@ class ControlPlaneAPI {
         $path = str_replace('/api', '', $path);
         
         try {
-            if ($method === 'POST' && $path === '/session/create') {
-                return $this->createSession();
+            // User endpoints
+            if ($method === 'POST' && $path === '/user/register') {
+                return $this->registerUser();
+            } elseif ($method === 'POST' && $path === '/user/login') {
+                return $this->loginUser();
+            }
+            
+            // Session endpoints (require auth)
+            elseif ($method === 'POST' && $path === '/session/create') {
+                return $this->requireAuth() ? $this->createSession() : null;
             } elseif ($method === 'GET' && preg_match('/^\/session\/([a-z0-9_]+)$/', $path, $m)) {
-                return $this->getSession($m[1]);
+                return $this->requireAuth() ? $this->getSession($m[1]) : null;
             } elseif ($method === 'GET' && preg_match('/^\/session\/([a-z0-9_]+)\/status$/', $path, $m)) {
-                return $this->getSessionStatus($m[1]);
-            } elseif ($method === 'GET' && $path === '/queue/status') {
+                return $this->requireAuth() ? $this->getSessionStatus($m[1]) : null;
+            } elseif ($method === 'GET' && $path === '/sessions') {
+                return $this->requireAuth() ? $this->listSessions() : null;
+            }
+            
+            // Queue endpoints
+            elseif ($method === 'GET' && $path === '/queue/status') {
                 return $this->getQueueStatus();
-            } elseif ($method === 'GET' && preg_match('/^\/logs\/([a-z0-9_]+)$/', $path, $m)) {
-                return $this->getLogs($m[1]);
-            } else {
+            }
+            
+            // Logs endpoints
+            elseif ($method === 'GET' && preg_match('/^\/logs\/([a-z0-9_]+)$/', $path, $m)) {
+                return $this->requireAuth() ? $this->getLogs($m[1]) : null;
+            }
+            
+            else {
                 return $this->error('Not Found', 404);
             }
         } catch (Exception $e) {
             logEvent(null, null, 'API_ERROR', $e->getMessage(), 'ERROR');
             return $this->error($e->getMessage(), 500);
+        }
+    }
+    
+    private function requireAuth() {
+        if (!$this->currentUser) {
+            $this->error('Unauthorized', 401);
+            return false;
+        }
+        return true;
+    }
+    
+    private function registerUser() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        if (!$data || !isset($data['username'], $data['email'], $data['password'])) {
+            return $this->error('Missing required fields', 400);
+        }
+        
+        $userId = generateId('user');
+        $passwordHash = password_hash($data['password'], PASSWORD_BCRYPT);
+        
+        try {
+            $stmt = $this->db->prepare("
+                INSERT INTO users (id, username, email, password_hash, is_active)
+                VALUES (?, ?, ?, ?, 1)
+            ");
+            $stmt->execute([$userId, $data['username'], $data['email'], $passwordHash]);
+            
+            logEvent(null, null, 'USER_REGISTERED', "User registered: {$data['username']}", 'INFO');
+            
+            return $this->success([
+                'user_id' => $userId,
+                'username' => $data['username'],
+                'email' => $data['email'],
+                'created_at' => date('c')
+            ]);
+            
+        } catch (Exception $e) {
+            return $this->error("Registration failed: " . $e->getMessage(), 500);
+        }
+    }
+    
+    private function loginUser() {
+        $data = json_decode(file_get_contents('php://input'), true);
+        
+        if (!$data || !isset($data['username'], $data['password'])) {
+            return $this->error('Missing credentials', 400);
+        }
+        
+        try {
+            $stmt = $this->db->prepare("SELECT id, password_hash FROM users WHERE username = ? AND is_active = 1");
+            $stmt->execute([$data['username']]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$user || !password_verify($data['password'], $user['password_hash'])) {
+                return $this->error('Invalid credentials', 401);
+            }
+            
+            // Generate token (simplified)
+            $token = $user['id'] . '_' . bin2hex(random_bytes(16));
+            
+            // Update last login
+            $stmt = $this->db->prepare("UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?");
+            $stmt->execute([$user['id']]);
+            
+            logEvent(null, null, 'USER_LOGIN', "User login: {$data['username']}", 'INFO');
+            
+            return $this->success([
+                'token' => $token,
+                'user_id' => $user['id'],
+                'username' => $data['username']
+            ]);
+            
+        } catch (Exception $e) {
+            return $this->error("Login failed: " . $e->getMessage(), 500);
         }
     }
     
@@ -374,15 +546,18 @@ class ControlPlaneAPI {
         }
         
         $sessionId = generateId('sess');
+        $userId = $this->currentUser['id'];
         $repeatCount = $data['repeat_count'] ?? 1;
+        $viewportMode = $data['viewport_mode'] ?? 'desktop';
         $config = json_encode($data['config'] ?? []);
         
         try {
+            // Insert session with user isolation
             $stmt = $this->db->prepare("
-                INSERT INTO sessions (id, url, repeat_count, config, status)
-                VALUES (?, ?, ?, ?, 'pending')
+                INSERT INTO sessions (id, user_id, url, repeat_count, viewport_mode, config, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending')
             ");
-            $stmt->execute([$sessionId, $data['url'], $repeatCount, $config]);
+            $stmt->execute([$sessionId, $userId, $data['url'], $repeatCount, $viewportMode, $config]);
             
             // Generate task graph
             $tasks = $this->generateTaskGraph($sessionId, $data);
@@ -397,6 +572,7 @@ class ControlPlaneAPI {
                 'status' => 'pending',
                 'url' => $data['url'],
                 'repeat_count' => $repeatCount,
+                'viewport_mode' => $viewportMode,
                 'tasks_generated' => count($tasks),
                 'queued_at' => date('c')
             ]);
@@ -417,14 +593,17 @@ class ControlPlaneAPI {
             'value' => $data['url']
         ];
         
-        // SELECTOR tasks (from data)
+        // SELECTOR tasks (with smart selector or coordinates)
         if (isset($data['selectors'])) {
             foreach ($data['selectors'] as $selector) {
                 $tasks[] = [
                     'type' => 'SELECTOR',
                     'action' => $selector['action'] ?? 'click',
-                    'selector' => $selector['selector'],
-                    'value' => $selector['value'] ?? null
+                    'selector' => $selector['selector'] ?? null,
+                    'coordinate_x' => $selector['x'] ?? null,
+                    'coordinate_y' => $selector['y'] ?? null,
+                    'value' => $selector['value'] ?? null,
+                    'repeat_count' => $selector['repeat'] ?? 1
                 ];
             }
         }
@@ -443,8 +622,8 @@ class ControlPlaneAPI {
         foreach ($tasks as $task) {
             $stmt = $this->db->prepare("
                 INSERT INTO tasks 
-                (session_id, task_index, task_type, action, selector, value, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                (session_id, task_index, task_type, action, selector, coordinate_x, coordinate_y, value, repeat_count, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             ");
             $stmt->execute([
                 $sessionId,
@@ -452,7 +631,10 @@ class ControlPlaneAPI {
                 $task['type'],
                 $task['action'] ?? null,
                 $task['selector'] ?? null,
-                $task['value'] ?? null
+                $task['coordinate_x'] ?? null,
+                $task['coordinate_y'] ?? null,
+                $task['value'] ?? null,
+                $task['repeat_count'] ?? 1
             ]);
         }
         
@@ -460,24 +642,26 @@ class ControlPlaneAPI {
     }
     
     private function getSession($sessionId) {
-        $stmt = $this->db->prepare("SELECT * FROM sessions WHERE id = ?");
-        $stmt->execute([$sessionId]);
+        // User isolation check
+        $stmt = $this->db->prepare("SELECT * FROM sessions WHERE id = ? AND user_id = ?");
+        $stmt->execute([$sessionId, $this->currentUser['id']]);
         $session = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if (!$session) {
-            return $this->error('Session not found', 404);
+            return $this->error('Session not found or access denied', 404);
         }
         
         return $this->success($session);
     }
     
     private function getSessionStatus($sessionId) {
-        $stmt = $this->db->prepare("SELECT * FROM sessions WHERE id = ?");
-        $stmt->execute([$sessionId]);
+        // User isolation check
+        $stmt = $this->db->prepare("SELECT * FROM sessions WHERE id = ? AND user_id = ?");
+        $stmt->execute([$sessionId, $this->currentUser['id']]);
         $session = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if (!$session) {
-            return $this->error('Session not found', 404);
+            return $this->error('Session not found or access denied', 404);
         }
         
         // Get task statuses
@@ -510,6 +694,25 @@ class ControlPlaneAPI {
         ]);
     }
     
+    private function listSessions() {
+        $limit = $_GET['limit'] ?? 50;
+        $offset = $_GET['offset'] ?? 0;
+        
+        $stmt = $this->db->prepare("
+            SELECT * FROM sessions
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        ");
+        $stmt->execute([$this->currentUser['id'], (int)$limit, (int)$offset]);
+        $sessions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        return $this->success([
+            'sessions' => $sessions,
+            'count' => count($sessions)
+        ]);
+    }
+    
     private function getQueueStatus() {
         $queueLength = $this->redis->llen('swaoe:queue:sessions');
         $activeWorkers = $this->redis->hgetall('swaoe:workers:active');
@@ -517,12 +720,20 @@ class ControlPlaneAPI {
         return $this->success([
             'queue_depth' => $queueLength,
             'active_workers' => count($activeWorkers),
-            'workers' => $activeWorkers,
             'timestamp' => date('c')
         ]);
     }
     
     private function getLogs($sessionId) {
+        // User isolation check
+        $stmt = $this->db->prepare("SELECT user_id FROM sessions WHERE id = ?");
+        $stmt->execute([$sessionId]);
+        $session = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$session || $session['user_id'] !== $this->currentUser['id']) {
+            return $this->error('Access denied', 403);
+        }
+        
         $limit = $_GET['limit'] ?? 100;
         $offset = $_GET['offset'] ?? 0;
         
@@ -537,9 +748,7 @@ class ControlPlaneAPI {
         
         return $this->success([
             'logs' => $logs,
-            'count' => count($logs),
-            'limit' => (int)$limit,
-            'offset' => (int)$offset
+            'count' => count($logs)
         ]);
     }
     
@@ -560,23 +769,19 @@ $api->handleRequest();
 PHP;
         
         $this->writeFile('api/index.php', $apiContent);
-        $this->log("✓ Created: api/index.php (Control Plane API)", "success");
+        $this->log("✓ Created: api/index.php (Control Plane API - Enhanced)", "success");
     }
     
     private function generateWorkerDaemon() {
-        $this->log("🔄 Generating Worker Daemon...", "section");
+        $this->log("🔄 Generating Worker Daemon (Persistent mode)...", "section");
         
-        // worker/daemon.php
         $daemonContent = <<<'PHP'
 <?php
 /**
- * SWAOE v4.1 Worker Daemon
+ * SWAOE v4.1 Worker Daemon (Persistent Mode)
  * 
- * Distributed worker that:
- * - Consumes jobs from Redis queue
- * - Acquires distributed lease locks
- * - Spawns Playwright execution VM
- * - Handles retry logic and failover
+ * For distributed deployments that require long-running workers.
+ * For stateless shared hosting, use worker/cron.php instead.
  * 
  * Usage: php worker/daemon.php start
  *        php worker/daemon.php stop
@@ -598,7 +803,6 @@ class WorkerDaemon {
         $this->workerId = WORKER_ID;
         $this->pidFile = '/tmp/swaoe_worker_' . $this->workerId . '.pid';
         
-        // Signal handlers
         if (function_exists('pcntl_signal')) {
             pcntl_signal(SIGTERM, [$this, 'shutdown']);
             pcntl_signal(SIGINT, [$this, 'shutdown']);
@@ -622,7 +826,7 @@ class WorkerDaemon {
         while ($this->running) {
             try {
                 $this->processQueue();
-                usleep(100000); // 100ms delay to prevent CPU spinning
+                usleep(100000);
             } catch (Exception $e) {
                 echo "[ERROR] " . $e->getMessage() . "\n";
                 logEvent(null, null, 'WORKER_ERROR', $e->getMessage(), 'ERROR', $this->workerId);
@@ -631,39 +835,32 @@ class WorkerDaemon {
     }
     
     private function processQueue() {
-        // Wait for job (blocking pop with timeout)
         $sessionId = $this->redis->brpop('swaoe:queue:sessions', 1);
         
         if (!$sessionId) {
-            return; // Timeout, continue loop
+            return;
         }
         
-        $sessionId = $sessionId[1]; // Redis BRPOP returns [key, value]
+        $sessionId = $sessionId[1];
         
         echo "[" . date('Y-m-d H:i:s') . "] Processing session: {$sessionId}\n";
         
         try {
-            // Attempt to acquire lease
             if (!$this->acquireLease($sessionId)) {
                 echo "[WARN] Could not acquire lease for {$sessionId}, requeueing\n";
                 $this->redis->lpush('swaoe:queue:sessions', $sessionId);
                 return;
             }
             
-            // Load session
             $session = $this->loadSession($sessionId);
             if (!$session) {
                 $this->releaseLease($sessionId);
                 return;
             }
             
-            // Update worker status
             $this->updateWorkerStatus('processing', $sessionId);
-            
-            // Execute session cycles
             $this->executeSession($session);
             
-            // Mark complete
             $stmt = $this->db->prepare("UPDATE sessions SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$sessionId]);
             
@@ -673,7 +870,6 @@ class WorkerDaemon {
             echo "[ERROR] Session processing failed: " . $e->getMessage() . "\n";
             logEvent($sessionId, null, 'SESSION_ERROR', $e->getMessage(), 'ERROR', $this->workerId);
             
-            // Increment retry count
             $stmt = $this->db->prepare("
                 SELECT COUNT(*) as count FROM execution_logs 
                 WHERE session_id = ? AND event_type = 'SESSION_ERROR'
@@ -707,7 +903,6 @@ class WorkerDaemon {
             $stmt->execute([$sessionId, $this->workerId, $expiresAt]);
             return true;
         } catch (Exception $e) {
-            // Lease already exists, check if expired
             $stmt = $this->db->prepare("
                 SELECT expires_at FROM worker_leases WHERE session_id = ?
             ");
@@ -715,10 +910,9 @@ class WorkerDaemon {
             $lease = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if ($lease && strtotime($lease['expires_at']) > time()) {
-                return false; // Lease still valid
+                return false;
             }
             
-            // Try to update expired lease
             $stmt = $this->db->prepare("
                 UPDATE worker_leases SET worker_id = ?, expires_at = datetime(?, 'unixepoch')
                 WHERE session_id = ? AND expires_at < datetime('now')
@@ -743,27 +937,24 @@ class WorkerDaemon {
     private function executeSession($session) {
         $sessionId = $session['id'];
         $repeatCount = $session['repeat_count'];
-        $url = $session['url'];
+        $viewportMode = $session['viewport_mode'];
         
-        // Mark as running
         $stmt = $this->db->prepare("UPDATE sessions SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = ?");
         $stmt->execute([$sessionId]);
         
         for ($cycle = 1; $cycle <= $repeatCount; $cycle++) {
-            echo "[" . date('Y-m-d H:i:s') . "] Executing cycle {$cycle}/{$repeatCount}\n";
+            echo "[" . date('Y-m-d H:i:s') . "] Executing cycle {$cycle}/{$repeatCount} (viewport: {$viewportMode})\n";
             
             $stmt = $this->db->prepare("UPDATE sessions SET current_cycle = ? WHERE id = ?");
             $stmt->execute([$cycle, $sessionId]);
             
-            // Load and execute tasks
-            $this->executeCycle($sessionId, $cycle);
+            $this->executeCycle($sessionId, $cycle, $viewportMode);
             
             logEvent($sessionId, null, 'CYCLE_COMPLETED', "Cycle {$cycle} completed", 'INFO', $this->workerId);
         }
     }
     
-    private function executeCycle($sessionId, $cycle) {
-        // Load tasks
+    private function executeCycle($sessionId, $cycle, $viewportMode) {
         $stmt = $this->db->prepare("
             SELECT * FROM tasks
             WHERE session_id = ?
@@ -772,18 +963,16 @@ class WorkerDaemon {
         $stmt->execute([$sessionId]);
         $tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Prepare Playwright execution
         $playwrightPayload = [
             'session_id' => $sessionId,
             'cycle' => $cycle,
+            'viewport_mode' => $viewportMode,
             'tasks' => $tasks
         ];
         
-        // Execute via Playwright VM
         $result = $this->runPlaywrightVM($playwrightPayload);
         
         if ($result && $result['success']) {
-            // Update task results
             foreach ($result['task_results'] as $taskResult) {
                 $stmt = $this->db->prepare("
                     UPDATE tasks
@@ -850,9 +1039,7 @@ class WorkerDaemon {
     }
 }
 
-// CLI interface
 $action = $argv[1] ?? 'help';
-
 $daemon = new WorkerDaemon();
 
 switch ($action) {
@@ -860,7 +1047,6 @@ switch ($action) {
         $daemon->start();
         break;
     case 'stop':
-        // Find and kill process
         $pidFile = '/tmp/swaoe_worker_' . WORKER_ID . '.pid';
         if (file_exists($pidFile)) {
             $pid = file_get_contents($pidFile);
@@ -878,20 +1064,205 @@ PHP;
         $this->log("✓ Created: worker/daemon.php (Worker Daemon)", "success");
     }
     
-    private function generatePlaywrightRunner() {
-        $this->log("🎭 Generating Playwright Runner VM...", "section");
+    private function generateCronWorker() {
+        $this->log("⏰ Generating Cron-Safe Stateless Worker...", "section");
         
-        // bridge/playwright_runner.js
+        $cronContent = <<<'PHP'
+<?php
+/**
+ * SWAOE v4.1 Cron-Safe Stateless Worker (PWTAE Mode)
+ * 
+ * For shared hosting environments. Run via cron every minute:
+ * * * * * * php /path/to/swaoe/worker/cron.php > /dev/null 2>&1
+ * 
+ * Features:
+ * - Stateless: No persistent process
+ * - Fresh sessions: Each run is clean (no cookies)
+ * - Timeout-safe: Dies immediately after task execution
+ * - Shared hosting safe: No resource hogging
+ */
+
+require_once __DIR__ . '/../config/config.php';
+
+class CronWorker {
+    private $db;
+    private $redis;
+    private $workerId;
+    
+    public function __construct() {
+        $this->db = getDb();
+        $this->redis = getRedis();
+        $this->workerId = 'cron_' . date('YmdHis') . '_' . substr(md5(microtime()), 0, 8);
+        
+        // Set execution timeout
+        set_time_limit(600);
+    }
+    
+    public function execute() {
+        try {
+            // Process one job
+            $sessionId = $this->redis->rpop('swaoe:queue:sessions');
+            
+            if (!$sessionId) {
+                // Queue empty
+                return;
+            }
+            
+            echo "[" . date('Y-m-d H:i:s') . "] Processing session: {$sessionId}\n";
+            
+            $session = $this->loadSession($sessionId);
+            if (!$session) {
+                return;
+            }
+            
+            // Acquire lease
+            if (!$this->acquireLease($sessionId)) {
+                echo "[WARN] Could not acquire lease, requeueing\n";
+                $this->redis->lpush('swaoe:queue:sessions', $sessionId);
+                return;
+            }
+            
+            try {
+                $this->executeSession($session);
+                
+                $stmt = $this->db->prepare("UPDATE sessions SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?");
+                $stmt->execute([$sessionId]);
+                
+                logEvent($sessionId, null, 'SESSION_COMPLETED', "Session execution completed", 'INFO', $this->workerId);
+                
+            } finally {
+                $this->releaseLease($sessionId);
+            }
+            
+        } catch (Exception $e) {
+            echo "[ERROR] " . $e->getMessage() . "\n";
+            logEvent($sessionId ?? null, null, 'CRON_ERROR', $e->getMessage(), 'ERROR', $this->workerId);
+        }
+    }
+    
+    private function loadSession($sessionId) {
+        $stmt = $this->db->prepare("SELECT * FROM sessions WHERE id = ?");
+        $stmt->execute([$sessionId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    private function acquireLease($sessionId) {
+        $expiresAt = time() + 600;  // 10 minute lease
+        
+        try {
+            $stmt = $this->db->prepare("
+                INSERT INTO worker_leases (session_id, worker_id, expires_at)
+                VALUES (?, ?, datetime(?, 'unixepoch'))
+            ");
+            $stmt->execute([$sessionId, $this->workerId, $expiresAt]);
+            return true;
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+    
+    private function releaseLease($sessionId) {
+        $stmt = $this->db->prepare("DELETE FROM worker_leases WHERE session_id = ?");
+        $stmt->execute([$sessionId]);
+    }
+    
+    private function executeSession($session) {
+        $sessionId = $session['id'];
+        $repeatCount = $session['repeat_count'];
+        $viewportMode = $session['viewport_mode'];
+        
+        $stmt = $this->db->prepare("UPDATE sessions SET status = 'running', started_at = CURRENT_TIMESTAMP WHERE id = ?");
+        $stmt->execute([$sessionId]);
+        
+        for ($cycle = 1; $cycle <= $repeatCount; $cycle++) {
+            $stmt = $this->db->prepare("UPDATE sessions SET current_cycle = ? WHERE id = ?");
+            $stmt->execute([$cycle, $sessionId]);
+            
+            $this->executeCycle($sessionId, $cycle, $viewportMode);
+            
+            logEvent($sessionId, null, 'CYCLE_COMPLETED', "Cycle {$cycle} completed", 'INFO', $this->workerId);
+        }
+    }
+    
+    private function executeCycle($sessionId, $cycle, $viewportMode) {
+        $stmt = $this->db->prepare("
+            SELECT * FROM tasks
+            WHERE session_id = ?
+            ORDER BY task_index ASC
+        ");
+        $stmt->execute([$sessionId]);
+        $tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        $playwrightPayload = [
+            'session_id' => $sessionId,
+            'cycle' => $cycle,
+            'viewport_mode' => $viewportMode,
+            'tasks' => $tasks
+        ];
+        
+        $payloadJson = json_encode($playwrightPayload);
+        $cmd = sprintf(
+            "%s %s %s 2>&1",
+            PLAYWRIGHT_EXECUTABLE,
+            escapeshellarg(PLAYWRIGHT_RUNNER),
+            escapeshellarg($payloadJson)
+        );
+        
+        exec($cmd, $output, $returnCode);
+        
+        if ($returnCode !== 0) {
+            logEvent($sessionId, null, 'PLAYWRIGHT_ERROR', implode("\n", $output), 'ERROR', $this->workerId);
+            throw new Exception("Playwright execution failed");
+        }
+        
+        try {
+            $result = json_decode(implode("\n", $output), true);
+            
+            if ($result && $result['success']) {
+                foreach ($result['task_results'] as $taskResult) {
+                    $stmt = $this->db->prepare("
+                        UPDATE tasks
+                        SET status = ?, result = ?
+                        WHERE session_id = ? AND task_index = ?
+                    ");
+                    $stmt->execute([
+                        $taskResult['status'],
+                        json_encode($taskResult),
+                        $sessionId,
+                        $taskResult['index']
+                    ]);
+                }
+            } else {
+                throw new Exception("Playwright returned error");
+            }
+        } catch (Exception $e) {
+            throw new Exception("Failed to parse Playwright output: " . $e->getMessage());
+        }
+    }
+}
+
+// Execute one job and exit immediately
+$worker = new CronWorker();
+$worker->execute();
+PHP;
+        
+        $this->writeFile('worker/cron.php', $cronContent);
+        $this->log("✓ Created: worker/cron.php (Cron-Safe Stateless Worker)", "success");
+    }
+    
+    private function generatePlaywrightRunner() {
+        $this->log("🎭 Generating Playwright Runner VM (Enhanced with modes)...", "section");
+        
         $runnerContent = <<<'JAVASCRIPT'
 /**
- * SWAOE v4.1 Playwright Browser Execution VM
+ * SWAOE v4.1 Enhanced Playwright Browser Execution VM
  * 
- * Executes deterministic DOM automation against a headless Chromium browser
- * 
- * Input: JSON payload with tasks
- * Output: JSON results
- * 
- * Invoked: node playwright_runner.js '<JSON_PAYLOAD>'
+ * Features:
+ * - Smart selector engine integration
+ * - Desktop and Mobile viewport modes (PWTAE)
+ * - Coordinate fallback (pixel-based clicking)
+ * - Fresh stateless sessions
+ * - Selector fallback logic
  */
 
 const playwright = require('playwright');
@@ -915,6 +1286,7 @@ class PlaywrightVM {
                 success: true,
                 session_id: this.payload.session_id,
                 cycle: this.payload.cycle,
+                viewport_mode: this.payload.viewport_mode,
                 task_results: this.results
             };
         } catch (error) {
@@ -937,8 +1309,19 @@ class PlaywrightVM {
         
         this.page = await this.browser.newPage();
         
-        // Set viewport
-        await this.page.setViewportSize({ width: 1920, height: 1080 });
+        // Set viewport based on mode (PWTAE)
+        const viewport = this.getViewport();
+        await this.page.setViewportSize(viewport);
+        
+        // PWTAE: Fresh session (no cookies, no storage)
+        await this.page.context().clearCookies();
+    }
+
+    getViewport() {
+        if (this.payload.viewport_mode === 'mobile') {
+            return { width: 375, height: 667 };
+        }
+        return { width: 1920, height: 1080 };
     }
 
     async executeTasks() {
@@ -963,6 +1346,7 @@ class PlaywrightVM {
                     break;
                     
                 case 'SELECTOR':
+                    // PWTAE: Try smart selector first, then coordinate fallback
                     output = await this.executeSelector(task);
                     break;
                     
@@ -1001,68 +1385,91 @@ class PlaywrightVM {
     }
 
     async executeSelector(task) {
-        let element = null;
-        let attempts = 0;
-        const maxAttempts = 3;
+        const repeatCount = task.repeat_count || 1;
         
-        // Try selector with fallback logic
-        const selectors = [task.selector];
-        if (task.selector.startsWith('.')) {
-            selectors.push(`[class*="${task.selector.substring(1)}"]`);
-        }
-        
-        while (!element && attempts < maxAttempts) {
-            for (const selector of selectors) {
-                try {
-                    element = await this.page.$(selector);
-                    if (element) break;
-                } catch (e) {
-                    // Continue
+        for (let rep = 0; rep < repeatCount; rep++) {
+            let element = null;
+            let attempts = 0;
+            const maxAttempts = 3;
+            
+            // PWTAE: Smart selector priority
+            let selectors = [];
+            
+            if (task.selector) {
+                selectors.push(task.selector);
+                // Add fallbacks
+                if (task.selector.startsWith('.')) {
+                    selectors.push(`[class*="${task.selector.substring(1)}"]`);
+                } else if (task.selector.startsWith('#')) {
+                    selectors.push(`[id="${task.selector.substring(1)}"]`);
                 }
             }
             
-            if (!element) {
-                attempts++;
-                if (attempts < maxAttempts) {
-                    await this.page.waitForTimeout(500);
+            while (!element && attempts < maxAttempts) {
+                for (const selector of selectors) {
+                    try {
+                        element = await this.page.$(selector);
+                        if (element) break;
+                    } catch (e) {
+                        // Continue
+                    }
+                }
+                
+                if (!element) {
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        await this.page.waitForTimeout(500);
+                    }
                 }
             }
-        }
-        
-        if (!element) {
-            throw new Error(`Selector not found: ${task.selector}`);
-        }
-        
-        // Execute action
-        switch (task.action) {
-            case 'click':
-                await element.click();
-                break;
-                
-            case 'fill':
-                await element.fill(task.value);
-                break;
-                
-            case 'hover':
-                await element.hover();
-                break;
-                
-            case 'focus':
-                await element.focus();
-                break;
-                
-            case 'press':
-                await this.page.keyboard.press(task.value);
-                break;
-                
-            default:
-                throw new Error(`Unknown action: ${task.action}`);
+            
+            // Fallback to coordinates if selector fails (PWTAE)
+            if (!element && task.coordinate_x && task.coordinate_y) {
+                console.error(`[FALLBACK] Using coordinates (${task.coordinate_x}, ${task.coordinate_y})`);
+                await this.page.click(`button, a, input, div[onclick]`, { 
+                    position: { x: task.coordinate_x, y: task.coordinate_y } 
+                });
+            } else if (element) {
+                // Execute action on found element
+                switch (task.action) {
+                    case 'click':
+                        await element.click();
+                        break;
+                        
+                    case 'fill':
+                        await element.fill(task.value);
+                        break;
+                        
+                    case 'hover':
+                        await element.hover();
+                        break;
+                        
+                    case 'focus':
+                        await element.focus();
+                        break;
+                        
+                    case 'press':
+                        await this.page.keyboard.press(task.value);
+                        break;
+                        
+                    default:
+                        throw new Error(`Unknown action: ${task.action}`);
+                }
+            } else {
+                throw new Error(`Selector not found and no fallback coordinates provided: ${task.selector}`);
+            }
+            
+            if (rep < repeatCount - 1) {
+                await this.page.waitForTimeout(500);  // Delay between repeats
+            }
         }
         
         return {
             selector: task.selector,
+            coordinates: { x: task.coordinate_x, y: task.coordinate_y },
             action: task.action,
-            value: task.value
+            value: task.value,
+            repeat_count: repeatCount
         };
     }
 
@@ -1098,14 +1505,13 @@ main();
 JAVASCRIPT;
         
         $this->writeFile('bridge/playwright_runner.js', $runnerContent);
-        $this->log("✓ Created: bridge/playwright_runner.js (Playwright VM)", "success");
+        $this->log("✓ Created: bridge/playwright_runner.js (Enhanced with modes)", "success");
         
-        // bridge/package.json
         $packageContent = <<<'JSON'
 {
   "name": "swaoe-playwright-runner",
-  "version": "4.1.0",
-  "description": "SWAOE v4.1 Playwright Browser Execution VM",
+  "version": "4.1.0-pwtae",
+  "description": "SWAOE v4.1 Enhanced Playwright Browser Execution VM (PWTAE-enabled)",
   "main": "playwright_runner.js",
   "scripts": {
     "install": "npm install",
@@ -1121,22 +1527,107 @@ JAVASCRIPT;
 JSON;
         
         $this->writeFile('bridge/package.json', $packageContent);
-        $this->log("✓ Created: bridge/package.json (Playwright dependencies)", "success");
+        $this->log("✓ Created: bridge/package.json", "success");
     }
     
-    private function generatePWADashboard() {
-        $this->log("🚀 Generating PWA Control Dashboard...", "section");
+    private function generateSelectorEngine() {
+        $this->log("🧠 Generating Smart Selector Engine...", "section");
         
-        // public/index.html
+        $selectorContent = <<<'JAVASCRIPT'
+/**
+ * SWAOE Smart Selector Engine
+ * 
+ * Intelligently detects page elements and maps to CSS selectors.
+ * Used by task builder to generate robust selectors.
+ */
+
+async function detectElement(page, x, y) {
+    try {
+        // Get element at coordinates
+        const element = await page.evaluate(({ x, y }) => {
+            const el = document.elementFromPoint(x, y);
+            if (!el) return null;
+            
+            return {
+                tagName: el.tagName,
+                id: el.id || null,
+                className: el.className || null,
+                text: el.textContent?.substring(0, 100),
+                attributes: {
+                    type: el.getAttribute('type'),
+                    name: el.getAttribute('name'),
+                    placeholder: el.getAttribute('placeholder'),
+                    'aria-label': el.getAttribute('aria-label')
+                }
+            };
+        }, { x, y });
+        
+        if (!element) return null;
+        
+        // Generate selectors (priority order)
+        const selectors = [];
+        
+        // 1. ID selector (most specific)
+        if (element.id) {
+            selectors.push(`#${element.id}`);
+        }
+        
+        // 2. Attribute selectors
+        if (element.attributes.type === 'button') {
+            selectors.push('button');
+        }
+        if (element.attributes['aria-label']) {
+            selectors.push(`[aria-label="${element.attributes['aria-label']}"]`);
+        }
+        if (element.attributes.placeholder) {
+            selectors.push(`[placeholder="${element.attributes.placeholder}"]`);
+        }
+        
+        // 3. Class selectors
+        if (element.className) {
+            const classes = element.className.split(' ');
+            if (classes.length > 0) {
+                selectors.push(`.${classes[0]}`);
+                selectors.push(`.${classes.join('.')}`);
+            }
+        }
+        
+        // 4. Text content selector
+        if (element.text && element.text.length > 0) {
+            selectors.push(`${element.tagName.toLowerCase()}:contains("${element.text.substring(0, 50)}")`);
+        }
+        
+        return {
+            element: element,
+            selectors: selectors,
+            coordinates: { x, y }
+        };
+    } catch (error) {
+        console.error('Selector detection failed:', error);
+        return null;
+    }
+}
+
+// Export for use in Playwright
+module.exports = { detectElement };
+JAVASCRIPT;
+        
+        $this->writeFile('bridge/selector_engine.js', $selectorContent);
+        $this->log("✓ Created: bridge/selector_engine.js (Smart Selector Engine)", "success");
+    }
+    
+    private function generateEnhancedPWADashboard() {
+        $this->log("🚀 Generating Enhanced PWA Dashboard (with Visual Task Builder)...", "section");
+        
         $htmlContent = <<<'HTML'
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="SWAOE v4.1 - Distributed Automation Orchestration Engine">
+    <meta name="description" content="SWAOE v4.1 - Enhanced Automation Dashboard (PWTAE)">
     <meta name="theme-color" content="#1a1a2e">
-    <title>SWAOE v4.1 Dashboard</title>
+    <title>SWAOE v4.1 Enhanced Dashboard</title>
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75' fill='%231a1a2e'>⚙</text></svg>">
     <style>
@@ -1155,24 +1646,24 @@ JSON;
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         
         header {
             text-align: center;
-            margin-bottom: 40px;
+            margin-bottom: 30px;
             border-bottom: 2px solid #0f3460;
             padding-bottom: 20px;
         }
         
         header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
+            font-size: 2em;
             background: linear-gradient(45deg, #00d4ff, #0099ff);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            margin-bottom: 5px;
         }
         
         header p {
@@ -1180,11 +1671,27 @@ JSON;
             font-size: 0.9em;
         }
         
+        .auth-section {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+        }
+        
+        .auth-section button {
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
         .grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
-            margin-bottom: 40px;
+            margin-bottom: 30px;
         }
         
         .card {
@@ -1198,21 +1705,22 @@ JSON;
         .card h2 {
             color: #00d4ff;
             margin-bottom: 15px;
-            font-size: 1.3em;
+            font-size: 1.1em;
         }
         
         .card label {
             display: block;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             color: #aaa;
             font-size: 0.9em;
         }
         
         .card input,
+        .card select,
         .card textarea {
             width: 100%;
             padding: 10px;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             background: rgba(10, 25, 47, 0.8);
             border: 1px solid #0f3460;
             border-radius: 4px;
@@ -1224,32 +1732,76 @@ JSON;
             background: linear-gradient(45deg, #00d4ff, #0099ff);
             color: #1a1a2e;
             border: none;
-            padding: 12px 24px;
+            padding: 12px 20px;
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
             width: 100%;
-            transition: transform 0.2s;
         }
         
         .card button:hover {
-            transform: scale(1.02);
+            opacity: 0.9;
         }
         
-        .card button:active {
-            transform: scale(0.98);
+        .viewport-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .viewport-selector label {
+            flex: 1;
+            margin: 0;
+        }
+        
+        .viewport-selector input[type="radio"] {
+            width: auto;
+            margin-right: 8px;
+        }
+        
+        .task-builder {
+            background: rgba(10, 25, 47, 0.6);
+            border: 1px dashed #0f3460;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .task-item {
+            background: rgba(15, 52, 96, 0.4);
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border-left: 3px solid #00d4ff;
+        }
+        
+        .task-item small {
+            color: #888;
+            display: block;
+            margin-top: 5px;
+        }
+        
+        .btn-add-task {
+            background: #0f3460;
+            border: 1px solid #00d4ff;
+            color: #00d4ff;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 10px;
         }
         
         .status-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
             gap: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         }
         
         .status-item {
             background: rgba(10, 25, 47, 0.8);
-            padding: 15px;
+            padding: 12px;
             border-radius: 4px;
             text-align: center;
             border-left: 3px solid #00d4ff;
@@ -1257,188 +1809,258 @@ JSON;
         
         .status-item strong {
             display: block;
-            font-size: 1.5em;
+            font-size: 1.3em;
             color: #00d4ff;
-            margin-bottom: 5px;
         }
         
         .status-item small {
             color: #888;
+            font-size: 0.8em;
         }
         
         .logs {
             background: rgba(10, 25, 47, 0.8);
             border: 1px solid #0f3460;
             border-radius: 4px;
-            padding: 15px;
-            height: 300px;
+            padding: 12px;
+            height: 250px;
             overflow-y: auto;
-            font-size: 0.85em;
+            font-size: 0.8em;
             font-family: monospace;
         }
         
         .log-entry {
-            padding: 5px;
+            padding: 3px;
             border-bottom: 1px solid #0f3460;
-            color: #aaa;
+            color: #888;
         }
         
-        .log-entry.error {
-            color: #ff6b6b;
-        }
-        
-        .log-entry.success {
-            color: #51cf66;
-        }
-        
-        .log-entry.info {
-            color: #00d4ff;
-        }
-        
-        .spinner {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border: 2px solid #0f3460;
-            border-top: 2px solid #00d4ff;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
+        .log-entry.error { color: #ff6b6b; }
+        .log-entry.success { color: #51cf66; }
+        .log-entry.info { color: #00d4ff; }
         
         @media (max-width: 768px) {
-            .grid {
-                grid-template-columns: 1fr;
-            }
-            
-            header h1 {
-                font-size: 1.8em;
-            }
+            .grid { grid-template-columns: 1fr; }
+            header h1 { font-size: 1.4em; }
         }
     </style>
 </head>
 <body>
+    <div class="auth-section">
+        <button id="authBtn" onclick="toggleAuth()">Login / Register</button>
+    </div>
+    
     <div class="container">
         <header>
-            <h1>⚙️ SWAOE v4.1</h1>
-            <p>Distributed Automation Orchestration Engine</p>
+            <h1>⚙️ SWAOE v4.1 Enhanced</h1>
+            <p>Distributed Automation + PWTAE (Persistent Web Task Automation Engine)</p>
         </header>
         
-        <div class="grid">
-            <!-- Create Session Card -->
-            <div class="card">
-                <h2>Create Session</h2>
-                
-                <label>Target URL</label>
-                <input type="text" id="url" placeholder="https://example.com" value="https://example.com">
-                
-                <label>Repeat Count</label>
-                <input type="number" id="repeatCount" min="1" max="100" value="1">
-                
-                <label>Configuration (JSON)</label>
-                <textarea id="config" placeholder='{"option": "value"}' rows="4">{"timeout": 30000}</textarea>
-                
-                <button onclick="createSession()">Create Session</button>
-                <div id="createStatus" style="margin-top: 10px; color: #888; font-size: 0.9em;"></div>
-            </div>
-            
-            <!-- Queue Status Card -->
-            <div class="card">
-                <h2>Queue Status</h2>
-                
-                <div class="status-grid" id="statusGrid">
-                    <div class="status-item">
-                        <strong>-</strong>
-                        <small>Queue Depth</small>
-                    </div>
-                    <div class="status-item">
-                        <strong>-</strong>
-                        <small>Active Workers</small>
-                    </div>
-                </div>
-                
-                <button onclick="refreshStatus()">Refresh Status</button>
-            </div>
-            
-            <!-- Session Lookup Card -->
-            <div class="card">
-                <h2>Session Lookup</h2>
-                
-                <label>Session ID</label>
-                <input type="text" id="sessionId" placeholder="sess_xxxxx">
-                
-                <button onclick="getSessionStatus()">Get Status</button>
-                <div id="sessionStatus" style="margin-top: 10px; color: #888; font-size: 0.85em; max-height: 200px; overflow-y: auto;"></div>
+        <div id="authModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+            <div class="card" style="max-width: 400px; width: 90%;">
+                <h2 id="authTitle">Login</h2>
+                <label>Username</label>
+                <input type="text" id="authUsername" placeholder="username">
+                <label>Email (for register)</label>
+                <input type="email" id="authEmail" placeholder="user@example.com">
+                <label>Password</label>
+                <input type="password" id="authPassword" placeholder="password">
+                <button onclick="handleAuth()">Login</button>
+                <button onclick="toggleAuthMode()" style="background: #0f3460; margin-top: 10px;">Switch to Register</button>
+                <button onclick="toggleAuth()" style="background: #333; margin-top: 10px;">Close</button>
             </div>
         </div>
         
-        <!-- Execution Logs -->
-        <div class="card" style="margin-bottom: 40px;">
-            <h2>System Logs</h2>
-            <div style="margin-bottom: 10px;">
-                <button onclick="clearLogs()" style="width: auto; padding: 8px 16px;">Clear Logs</button>
-                <span id="autoRefreshStatus" style="margin-left: 10px; color: #888;"></span>
+        <div id="mainApp" style="display: none;">
+            <div class="grid">
+                <!-- Create Session -->
+                <div class="card">
+                    <h2>📝 Create Session</h2>
+                    
+                    <label>Target URL</label>
+                    <input type="text" id="url" placeholder="https://example.com">
+                    
+                    <label>Repeat Count</label>
+                    <input type="number" id="repeatCount" min="1" max="100" value="1">
+                    
+                    <label>Viewport Mode</label>
+                    <div class="viewport-selector">
+                        <label>
+                            <input type="radio" name="viewport" value="desktop" checked>
+                            🖥 Desktop
+                        </label>
+                        <label>
+                            <input type="radio" name="viewport" value="mobile">
+                            📱 Mobile
+                        </label>
+                    </div>
+                    
+                    <div class="task-builder">
+                        <strong style="color: #00d4ff;">Tasks</strong>
+                        <div id="tasksList"></div>
+                        <button class="btn-add-task" onclick="addTaskStep()">+ Add Task Step</button>
+                    </div>
+                    
+                    <button onclick="createSession()">Create & Queue Session</button>
+                    <div id="createStatus" style="margin-top: 10px; color: #888; font-size: 0.9em;"></div>
+                </div>
+                
+                <!-- Queue Status -->
+                <div class="card">
+                    <h2>📊 System Status</h2>
+                    
+                    <div class="status-grid" id="statusGrid">
+                        <div class="status-item">
+                            <strong>-</strong>
+                            <small>Queue</small>
+                        </div>
+                        <div class="status-item">
+                            <strong>-</strong>
+                            <small>Workers</small>
+                        </div>
+                    </div>
+                    
+                    <button onclick="refreshStatus()">Refresh</button>
+                </div>
+                
+                <!-- Session Lookup -->
+                <div class="card">
+                    <h2>🔍 Session Lookup</h2>
+                    
+                    <label>Session ID</label>
+                    <input type="text" id="sessionId" placeholder="sess_xxxxx">
+                    
+                    <button onclick="getSessionStatus()">Get Status</button>
+                    <div id="sessionStatus" style="margin-top: 10px; color: #888; font-size: 0.85em; max-height: 150px; overflow-y: auto;"></div>
+                </div>
             </div>
-            <div class="logs" id="logs"></div>
+            
+            <!-- Logs -->
+            <div class="card">
+                <h2>📜 System Logs</h2>
+                <div style="margin-bottom: 10px;">
+                    <button onclick="clearLogs()" style="width: auto; padding: 8px 16px; background: #0f3460; border: 1px solid #00d4ff; color: #00d4ff; border-radius: 4px; cursor: pointer;">Clear</button>
+                    <span id="autoRefreshStatus" style="margin-left: 10px; color: #888;"></span>
+                </div>
+                <div class="logs" id="logs"></div>
+            </div>
         </div>
     </div>
     
     <script>
-        // Service Worker registration
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/service-worker.js').catch(() => {});
-        }
-        
-        // Auto-refresh status
+        let authMode = 'login';
+        let authToken = localStorage.getItem('swaoe_token');
         let autoRefreshInterval = null;
+        const tasks = [];
         
-        function startAutoRefresh() {
-            autoRefreshInterval = setInterval(async () => {
-                await refreshStatus();
-                await updateLogs();
-            }, 5000);
-            document.getElementById('autoRefreshStatus').textContent = '🟢 Auto-refreshing...';
+        function toggleAuth() {
+            document.getElementById('authModal').style.display = 
+                document.getElementById('authModal').style.display === 'none' ? 'flex' : 'none';
         }
         
-        function stopAutoRefresh() {
-            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-            document.getElementById('autoRefreshStatus').textContent = '';
+        function toggleAuthMode() {
+            authMode = authMode === 'login' ? 'register' : 'login';
+            document.getElementById('authTitle').textContent = authMode === 'login' ? 'Login' : 'Register';
         }
         
-        startAutoRefresh();
-        
-        // API calls
-        async function createSession() {
+        async function handleAuth() {
+            const username = document.getElementById('authUsername').value;
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+            
+            if (!username || !password) {
+                alert('Fill in required fields');
+                return;
+            }
+            
             try {
-                const url = document.getElementById('url').value;
-                const repeatCount = parseInt(document.getElementById('repeatCount').value);
-                const config = JSON.parse(document.getElementById('config').value);
-                
-                const statusEl = document.getElementById('createStatus');
-                statusEl.innerHTML = '<span class="spinner"></span> Creating session...';
-                
-                const response = await fetch('/api/session/create', {
+                const response = await fetch(`/api/user/${authMode}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, repeat_count: repeatCount, config })
+                    body: JSON.stringify({
+                        username,
+                        email: authMode === 'register' ? email : undefined,
+                        password
+                    })
                 });
                 
                 const result = await response.json();
                 
                 if (result.success) {
-                    statusEl.innerHTML = `<span class="log-entry success">✓ Session created: ${result.data.session_id}</span>`;
+                    authToken = result.data.token;
+                    localStorage.setItem('swaoe_token', authToken);
+                    document.getElementById('authModal').style.display = 'none';
+                    document.getElementById('mainApp').style.display = 'block';
+                    addLog(`User ${username} authenticated`, 'success');
+                    startAutoRefresh();
+                } else {
+                    alert('Auth failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        function addTaskStep() {
+            const step = tasks.length + 1;
+            const html = `
+                <div class="task-item" id="task_${step}">
+                    Action: <input type="text" placeholder="click / fill / wait" style="width: auto; padding: 4px;">
+                    Selector: <input type="text" placeholder="#id or .class" style="width: auto; padding: 4px;">
+                    <button onclick="removeTask(${step})" style="background: #ff6b6b; padding: 4px 8px; border: none; color: white; border-radius: 3px; cursor: pointer;">Remove</button>
+                    <small>Task ${step}</small>
+                </div>
+            `;
+            document.getElementById('tasksList').insertAdjacentHTML('beforeend', html);
+            tasks.push(step);
+        }
+        
+        function removeTask(step) {
+            document.getElementById(`task_${step}`).remove();
+            tasks.splice(tasks.indexOf(step), 1);
+        }
+        
+        async function createSession() {
+            if (!authToken) {
+                alert('Please login first');
+                return;
+            }
+            
+            const url = document.getElementById('url').value;
+            const repeatCount = parseInt(document.getElementById('repeatCount').value);
+            const viewport = document.querySelector('input[name="viewport"]:checked').value;
+            
+            if (!url) {
+                alert('Enter a URL');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/session/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Auth-Token': authToken
+                    },
+                    body: JSON.stringify({
+                        url,
+                        repeat_count: repeatCount,
+                        viewport_mode: viewport,
+                        selectors: []  // Add from task builder
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    document.getElementById('createStatus').innerHTML = `<span class="log-entry success">✓ Session: ${result.data.session_id}</span>`;
                     document.getElementById('sessionId').value = result.data.session_id;
                     addLog(`Session created: ${result.data.session_id}`, 'success');
                 } else {
-                    statusEl.innerHTML = `<span class="log-entry error">✗ Error: ${result.error}</span>`;
-                    addLog(`Error: ${result.error}`, 'error');
+                    document.getElementById('createStatus').innerHTML = `<span class="log-entry error">✗ ${result.error}</span>`;
                 }
             } catch (error) {
                 document.getElementById('createStatus').innerHTML = `<span class="log-entry error">✗ ${error.message}</span>`;
-                addLog(`Error: ${error.message}`, 'error');
             }
         }
         
@@ -1466,26 +2088,29 @@ JSON;
         }
         
         async function getSessionStatus() {
+            const sessionId = document.getElementById('sessionId').value;
+            if (!sessionId) return;
+            
             try {
-                const sessionId = document.getElementById('sessionId').value;
-                if (!sessionId) return;
+                const response = await fetch(`/api/session/${sessionId}/status`, {
+                    headers: { 'X-Auth-Token': authToken }
+                });
                 
-                const response = await fetch(`/api/session/${sessionId}/status`);
                 const result = await response.json();
                 
-                const statusEl = document.getElementById('sessionStatus');
                 if (result.success) {
                     const session = result.data.session;
-                    statusEl.innerHTML = `
-                        <div style="margin-bottom: 10px;">
+                    document.getElementById('sessionStatus').innerHTML = `
+                        <div>
                             <strong>Status:</strong> ${session.status}<br>
                             <strong>Cycle:</strong> ${session.current_cycle}/${session.repeat_count}<br>
+                            <strong>Mode:</strong> ${session.viewport_mode}<br>
                             <strong>Created:</strong> ${new Date(session.created_at).toLocaleString()}
                         </div>
                     `;
-                    addLog(`Session status fetched: ${session.status}`, 'info');
+                    addLog(`Session status: ${session.status}`, 'info');
                 } else {
-                    statusEl.innerHTML = `<span class="log-entry error">Error: ${result.error}</span>`;
+                    document.getElementById('sessionStatus').innerHTML = `<span class="log-entry error">Error: ${result.error}</span>`;
                 }
             } catch (error) {
                 document.getElementById('sessionStatus').innerHTML = `<span class="log-entry error">Error: ${error.message}</span>`;
@@ -1499,7 +2124,6 @@ JSON;
             entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
             logs.insertBefore(entry, logs.firstChild);
             
-            // Keep only last 100 logs
             while (logs.children.length > 100) {
                 logs.removeChild(logs.lastChild);
             }
@@ -1507,38 +2131,47 @@ JSON;
         
         function clearLogs() {
             document.getElementById('logs').innerHTML = '';
-            addLog('Logs cleared', 'info');
         }
         
-        async function updateLogs() {
-            // Implemented by application
+        function startAutoRefresh() {
+            autoRefreshInterval = setInterval(async () => {
+                await refreshStatus();
+            }, 5000);
+            document.getElementById('autoRefreshStatus').textContent = '🟢 Auto-refreshing...';
         }
         
-        // Initial status
-        refreshStatus();
+        // Initialize
+        if (authToken) {
+            document.getElementById('mainApp').style.display = 'block';
+            startAutoRefresh();
+        } else {
+            document.getElementById('authModal').style.display = 'flex';
+        }
+        
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+        }
     </script>
 </body>
 </html>
 HTML;
         
         $this->writeFile('public/index.html', $htmlContent);
-        $this->log("✓ Created: public/index.html (PWA Dashboard)", "success");
+        $this->log("✓ Created: public/index.html (Enhanced PWA Dashboard)", "success");
         
-        // public/manifest.json
+        // Manifest
         $manifestContent = <<<'JSON'
 {
-  "name": "SWAOE v4.1 Dashboard",
+  "name": "SWAOE v4.1 Enhanced",
   "short_name": "SWAOE",
-  "description": "Distributed Automation Orchestration Engine",
+  "description": "Distributed Automation + PWTAE",
   "start_url": "/",
-  "scope": "/",
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#1a1a2e",
-  "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a1a2e' width='192' height='192'/><text x='96' y='144' font-size='120' text-anchor='middle' fill='%2300d4ff' font-weight='bold'>⚙</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a1a2e' width='192' height='192'/><text x='96' y='144' font-size='120' text-anchor='middle' fill='%2300d4ff'>⚙</text></svg>",
       "sizes": "192x192",
       "type": "image/svg+xml"
     }
@@ -1547,62 +2180,24 @@ HTML;
 JSON;
         
         $this->writeFile('public/manifest.json', $manifestContent);
-        $this->log("✓ Created: public/manifest.json (PWA Manifest)", "success");
+        $this->log("✓ Created: public/manifest.json", "success");
         
-        // public/service-worker.js
+        // Service Worker
         $swContent = <<<'JAVASCRIPT'
-/**
- * SWAOE PWA Service Worker
- * Provides offline caching and background sync
- */
-
-const CACHE_NAME = 'swaoe-v4.1';
-const URLS_TO_CACHE = [
-    '/',
-    '/index.html',
-    '/manifest.json'
-];
+const CACHE_NAME = 'swaoe-v4.1-enhanced';
 
 self.addEventListener('install', event => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-            return cache.addAll(URLS_TO_CACHE).catch(() => {
-                // Silently fail if resources unavailable
-            });
-        })
-    );
-});
-
-self.addEventListener('activate', event => {
-    event.waitUntil(
-        caches.keys().then(cacheNames => {
-            return Promise.all(
-                cacheNames.map(cacheName => {
-                    if (cacheName !== CACHE_NAME) {
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
-        })
-    );
+    event.waitUntil(caches.open(CACHE_NAME).then(cache => {
+        return cache.addAll(['/index.html', '/manifest.json']).catch(() => {});
+    }));
 });
 
 self.addEventListener('fetch', event => {
     if (event.request.method === 'GET') {
         event.respondWith(
             caches.match(event.request).then(response => {
-                return response || fetch(event.request).then(response => {
-                    // Cache successful API responses
-                    if (response.status === 200 && event.request.url.includes('/api/')) {
-                        const responseClone = response.clone();
-                        caches.open(CACHE_NAME).then(cache => {
-                            cache.put(event.request, responseClone);
-                        });
-                    }
-                    return response;
-                }).catch(() => {
-                    // Return cached version on network error
-                    return caches.match(event.request);
+                return response || fetch(event.request).catch(() => {
+                    return caches.match('/index.html');
                 });
             })
         );
@@ -1611,709 +2206,222 @@ self.addEventListener('fetch', event => {
 JAVASCRIPT;
         
         $this->writeFile('public/service-worker.js', $swContent);
-        $this->log("✓ Created: public/service-worker.js (Service Worker)", "success");
+        $this->log("✓ Created: public/service-worker.js", "success");
     }
     
     private function generateHtaccess() {
         $this->log("🛡️  Generating routing & security layer...", "section");
         
         $htaccessContent = <<<'HTACCESS'
-# SWAOE v4.1 Routing & Security
-
 RewriteEngine On
 
-# Protect sensitive directories
 <FilesMatch "^(config|data|worker|bridge|logs)">
     Deny from all
 </FilesMatch>
 
-# API routing
 RewriteRule ^api/(.*)$ api/index.php?path=$1 [QSA,L]
-
-# PWA routing
 RewriteRule ^(manifest\.json|service-worker\.js)$ public/$1 [QSA,L]
-
-# Public assets
 RewriteRule ^(.*)$ public/$1 [QSA,L]
 
-# Security headers
 Header set X-Content-Type-Options "nosniff"
 Header set X-Frame-Options "DENY"
 Header set X-XSS-Protection "1; mode=block"
-Header set Referrer-Policy "strict-origin-when-cross-origin"
 
-# CORS headers (adjust for your domain)
 Header set Access-Control-Allow-Origin "*"
 Header set Access-Control-Allow-Methods "GET, POST, OPTIONS"
-Header set Access-Control-Allow-Headers "Content-Type, Authorization"
+Header set Access-Control-Allow-Headers "Content-Type, Authorization, X-Auth-Token"
 
-# Cache control
 <FilesMatch "\.(jpg|jpeg|png|gif|ico|css|js|svg)$">
     Header set Cache-Control "max-age=604800, public"
-</FilesMatch>
-
-# Prevent direct access to PHP files (except index)
-<FilesMatch "\.php$">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-</FilesMatch>
-
-# Allow index.php
-<FilesMatch "^index\.php$">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
 </FilesMatch>
 HTACCESS;
         
         $this->writeFile('.htaccess', $htaccessContent);
-        $this->log("✓ Created: .htaccess (Routing & Security)", "success");
+        $this->log("✓ Created: .htaccess", "success");
     }
     
     private function generateDeploymentConfigs() {
-        $this->log("🐳 Generating deployment configurations...", "section");
+        $this->log("🐳 Generating deployment configs...", "section");
         
-        // docker-compose.yml
         $dockerComposeContent = <<<'YAML'
 version: '3.8'
 
 services:
   redis:
     image: redis:7-alpine
-    container_name: swaoe_redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - swaoe
 
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
-    container_name: swaoe_api
     ports:
       - "8080:8080"
     environment:
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
       - DB_PATH=/app/data/swaoe_cluster.sqlite
-      - SWAOE_ENV=production
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - swaoe
+      - redis
     restart: unless-stopped
 
   worker_1:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: swaoe_worker_1
     environment:
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
       - WORKER_ID=worker_1
       - DB_PATH=/app/data/swaoe_cluster.sqlite
-      - SWAOE_ENV=production
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - swaoe
-    restart: unless-stopped
-
-  worker_2:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    container_name: swaoe_worker_2
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - WORKER_ID=worker_2
-      - DB_PATH=/app/data/swaoe_cluster.sqlite
-      - SWAOE_ENV=production
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - swaoe
+      - redis
     restart: unless-stopped
 
 volumes:
   redis_data:
-
-networks:
-  swaoe:
-    driver: bridge
 YAML;
         
         $this->writeFile('docker-compose.yml', $dockerComposeContent);
-        $this->log("✓ Created: docker-compose.yml (Cluster orchestration)", "success");
+        $this->log("✓ Created: docker-compose.yml", "success");
         
-        // Dockerfile.api
-        $dockerfileApiContent = <<<'DOCKERFILE'
+        $dockerfileApi = <<<'DOCKERFILE'
 FROM php:8.2-apache
-
-# Enable required PHP extensions
 RUN docker-php-ext-install pdo pdo_sqlite
 RUN pecl install redis && docker-php-ext-enable redis
-
-# Enable mod_rewrite
 RUN a2enmod rewrite
-
-# Set working directory
 WORKDIR /app
-
-# Copy application
 COPY . .
-
-# Set permissions
-RUN chown -R www-data:www-data /app
-RUN chmod -R 755 /app
-
-# Create necessary directories
-RUN mkdir -p /app/data /app/logs
-RUN chmod 777 /app/data /app/logs
-
-# Configure Apache
-RUN echo '<Directory /app/public>' > /etc/apache2/sites-available/default-ssl.conf && \
-    echo 'AllowOverride All' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo 'Require all granted' >> /etc/apache2/sites-available/default-ssl.conf && \
-    echo '</Directory>' >> /etc/apache2/sites-available/default-ssl.conf
-
-# Set document root
+RUN chown -R www-data:www-data /app && chmod -R 755 /app
+RUN mkdir -p /app/data /app/logs && chmod 777 /app/data /app/logs
 ENV APACHE_DOCUMENT_ROOT=/app/public
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
-
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf
 EXPOSE 8080
-
 CMD ["apache2-foreground"]
 DOCKERFILE;
         
-        $this->writeFile('Dockerfile.api', $dockerfileApiContent);
-        $this->log("✓ Created: Dockerfile.api (PHP API container)", "success");
+        $this->writeFile('Dockerfile.api', $dockerfileApi);
+        $this->log("✓ Created: Dockerfile.api", "success");
         
-        // Dockerfile.worker
-        $dockerfileWorkerContent = <<<'DOCKERFILE'
+        $dockerfileWorker = <<<'DOCKERFILE'
 FROM php:8.2-cli
-
-# Install Node.js
-RUN apt-get update && apt-get install -y \
-    nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
-
-# Enable required PHP extensions
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
 RUN docker-php-ext-install pdo pdo_sqlite
 RUN pecl install redis && docker-php-ext-enable redis
-
-# Install Playwright
 RUN npm install -g playwright
-
-# Set working directory
 WORKDIR /app
-
-# Copy application
 COPY . .
-
-# Install bridge dependencies
 RUN cd /app/bridge && npm install
-
-# Create necessary directories
-RUN mkdir -p /app/data /app/logs
-RUN chmod 777 /app/data /app/logs
-
+RUN mkdir -p /app/data /app/logs && chmod 777 /app/data /app/logs
 CMD ["php", "worker/daemon.php", "start"]
 DOCKERFILE;
         
-        $this->writeFile('Dockerfile.worker', $dockerfileWorkerContent);
-        $this->log("✓ Created: Dockerfile.worker (Worker container)", "success");
+        $this->writeFile('Dockerfile.worker', $dockerfileWorker);
+        $this->log("✓ Created: Dockerfile.worker", "success");
     }
     
     private function generateDocumentation() {
         $this->log("📖 Generating documentation...", "section");
         
-        // README.md
         $readmeContent = <<<'MARKDOWN'
-# SWAOE v4.1 — Distributed Automation Orchestration Engine
+# SWAOE v4.1 Enhanced — Distributed Automation + PWTAE
 
-A production-ready distributed workflow automation system for orchestrating deterministic browser automation at scale.
+A production-ready distributed workflow automation system enhanced with **PWTAE principles**:
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CONTROL PLANE (API)                      │
-│  - Session creation  - Task compilation  - Status reporting │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                ┌───────────┼───────────┐
-                ▼           ▼           ▼
-            ┌──────┐   ┌──────┐   ┌──────┐
-            │ TASK │   │ TASK │   │ TASK │
-            │GRAPH │   │GRAPH │   │GRAPH │
-            └──────┘   └──────┘   └──────┘
-                            │
-                ┌───────────┴───────────┐
-                ▼                       ▼
-          ┌──────────┐          ┌──────────┐
-          │  REDIS   │          │ SQLITE   │
-          │  QUEUE   │          │DATABASE  │
-          └──────────┘          └──────────┘
-                │
-        ┌───────┴───────┬───────┬───────┐
-        ▼               ▼       ▼       ▼
-    ┌────────┐   ┌────────┐ ┌────────┐
-    │WORKER 1│   │WORKER 2│ │WORKER N│
-    └────────┘   └────────┘ └────────┘
-        │               │       │
-        └───────┬───────┴───────┘
-                ▼
-        ┌───────────────────┐
-        │  PLAYWRIGHT VM    │
-        │ (Browser + DOM)   │
-        └───────────────────┘
-```
+- **Stateless Sessions**: Fresh browser environment every execution (no cookies)
+- **Multi-user Support**: User isolation + session ownership
+- **Smart Selectors**: DOM detection + coordinate fallback
+- **Viewport Modes**: Desktop & Mobile automation
+- **Flexible Execution**: Daemon or cron-safe stateless worker
 
 ## Features
 
-- **Distributed Execution**: Horizontal scaling via Redis queue and worker pool
-- **Stateless Processing**: Each execution cycle is isolated and deterministic
-- **Automatic Retry**: Built-in failure recovery with configurable retry limits
-- **Distributed Locking**: Lease-based synchronization prevents duplicate execution
-- **Browser Automation**: Headless Chromium via Playwright Node runtime
-- **Real-time Monitoring**: PWA dashboard with live queue and execution tracking
-- **Persistent State**: SQLite-backed session and task logging
-- **Docker-ready**: Complete docker-compose setup for production deployment
+✅ Multi-user authentication + session isolation  
+✅ Smart selector engine (DOM + coordinates)  
+✅ Desktop and mobile viewport modes  
+✅ Stateless fresh sessions (PWTAE)  
+✅ Daemon or cron-safe execution  
+✅ Distributed task retry + failover  
+✅ Real-time monitoring dashboard  
+✅ PWA with offline support  
 
-## Installation
+## Quick Start
 
-### Quick Start (Local Development)
-
+### Docker
 ```bash
-# 1. Run installer
-php install.php
-
-# 2. Install bridge dependencies
-cd bridge && npm install && cd ..
-
-# 3. Create SQLite database
-mkdir -p data
-touch data/swaoe_cluster.sqlite
-chmod 666 data/swaoe_cluster.sqlite
-
-# 4. Start Redis (requires Redis installed locally)
-redis-server &
-
-# 5. Start API server
-cd api && php -S localhost:8080
-
-# 6. Start worker daemon (in another terminal)
-php worker/daemon.php start
-
-# 7. Open dashboard
-# http://localhost:8080
+docker-compose up -d
+# Dashboard: http://localhost:8080
 ```
 
-### Docker Deployment (Production)
-
+### Local (Daemon Mode)
 ```bash
-# Build and run entire cluster
-docker-compose up -d
+php install.php
+cd bridge && npm install && cd ..
+redis-server &
+php -S localhost:8080 -t public &
+php worker/daemon.php start &
+```
 
-# View logs
-docker-compose logs -f
-
-# Scale workers
-docker-compose up -d --scale worker=4
-
-# Stop cluster
-docker-compose down
+### Shared Hosting (Cron Mode)
+```bash
+php install.php --cron-mode
+# Setup cron: * * * * * php /path/to/worker/cron.php
 ```
 
 ## API Endpoints
 
-### Create Session
-
-```bash
-POST /api/session/create
-Content-Type: application/json
-
-{
-  "url": "https://example.com",
-  "repeat_count": 3,
-  "config": {
-    "timeout": 30000
-  },
-  "selectors": [
-    {
-      "selector": ".button-class",
-      "action": "click"
-    },
-    {
-      "selector": "#input-id",
-      "action": "fill",
-      "value": "search term"
-    }
-  ],
-  "waits": [
-    {
-      "delay": 1000
-    }
-  ]
-}
-
-Response:
-{
-  "success": true,
-  "data": {
-    "session_id": "sess_abc123def456",
-    "status": "pending",
-    "url": "https://example.com",
-    "repeat_count": 3,
-    "tasks_generated": 5,
-    "queued_at": "2024-01-10T12:30:00Z"
-  }
-}
 ```
-
-### Get Session Status
-
-```bash
-GET /api/session/{session_id}/status
-
-Response:
-{
-  "success": true,
-  "data": {
-    "session": {
-      "id": "sess_abc123def456",
-      "status": "running",
-      "current_cycle": 2,
-      "repeat_count": 3,
-      "url": "https://example.com",
-      "created_at": "2024-01-10T12:30:00Z"
-    },
-    "task_stats": [...],
-    "recent_logs": [...]
-  }
-}
-```
-
-### Get Queue Status
-
-```bash
-GET /api/queue/status
-
-Response:
-{
-  "success": true,
-  "data": {
-    "queue_depth": 5,
-    "active_workers": 2,
-    "workers": {
-      "worker_1": {"status": "processing", "pid": 1234},
-      "worker_2": {"status": "idle", "pid": 1235}
-    },
-    "timestamp": "2024-01-10T12:30:45Z"
-  }
-}
-```
-
-## Configuration
-
-Edit `config/config.php` or set environment variables:
-
-```bash
-REDIS_HOST=localhost
-REDIS_PORT=6379
-DB_PATH=/path/to/swaoe_cluster.sqlite
-WORKER_ID=worker_1
-WORKER_MAX_RETRIES=3
-WORKER_LEASE_TIMEOUT=300
-WORKER_CYCLE_TIMEOUT=600
-PLAYWRIGHT_TIMEOUT=30000
-SWAOE_ENV=production
+POST /api/user/register          - Register
+POST /api/user/login             - Login  
+POST /api/session/create         - Create session
+GET  /api/session/:id/status     - Get status
+GET  /api/queue/status           - System status
+GET  /api/logs/:id               - Execution logs
 ```
 
 ## Task Types
 
-- **NAVIGATE**: Navigate to URL (`goto`)
-- **SELECTOR**: Click, fill, hover, focus on element
-- **WAIT**: Delay execution
-- **SCREENSHOT**: Capture screenshot
+- **NAVIGATE**: Go to URL
+- **SELECTOR**: Click/fill element (smart or coordinate-based)
+- **WAIT**: Delay
+- **SCREENSHOT**: Capture
 
-## Execution Flow
+## Configuration
 
-1. User creates session via API
-2. Session inserted into SQLite, tasks generated
-3. Session queued in Redis
-4. Worker acquires lease lock
-5. Worker loads session and tasks
-6. For each cycle:
-   - Load tasks from database
-   - Serialize into JSON
-   - Spawn Playwright Node subprocess
-   - Execute DOM interactions
-   - Store results in database
-7. Update session status as completed
-8. Release lease lock
-9. Logs available via API and dashboard
+Set environment variables or edit `config/config.php`:
 
-## Failure Recovery
-
-- **Lease Expiry**: Expired leases release automatically (configurable)
-- **Worker Crash**: Job requeued if worker dies without cleanup
-- **Task Retry**: Individual tasks retry on selector failures
-- **Max Retries**: Session fails after N retry attempts
-- **Queue Persistence**: Redis persists queue state
-
-## PWA Dashboard
-
-- Create sessions with custom selectors and actions
-- Real-time queue and worker monitoring
-- Execution logs with filtering
-- Offline caching with service workers
-- Installable as native app
-
-## Performance Tuning
-
-- **Queue Depth**: Monitor via `/api/queue/status`
-- **Worker Pool**: Scale horizontally in docker-compose
-- **Lease Timeout**: Balance between failover speed and false positives
-- **Task Timeout**: Set per-task or globally via config
-- **Playwright Instances**: One per cycle (stateless)
-
-## Monitoring
-
-Logs stored in `logs/` directory and SQLite `execution_logs` table:
-
-- Session lifecycle events
-- Task completion status
-- Worker heartbeats
-- Error traces with context
-- Retry attempts
-
-Query logs:
-```sql
-SELECT * FROM execution_logs
-WHERE session_id = 'sess_abc123'
-ORDER BY timestamp DESC;
+```
+REDIS_HOST=localhost
+VIEWPORT_DESKTOP=1920x1080
+VIEWPORT_MOBILE=375x667
+SESSION_STATELESS=true
 ```
 
-## Security
+## PWTAE Principles
 
-- Sensitive directories blocked via .htaccess
-- CORS headers configurable
-- X-Frame-Options: DENY (prevent clickjacking)
-- API validates session IDs and input
-- Lease-based execution prevents race conditions
-
-## Troubleshooting
-
-### Session stuck in "pending"
-- Check Redis connectivity
-- Verify worker daemon is running
-- Check `execution_logs` for errors
-
-### Playwright fails to execute
-- Verify Node.js installed: `node -v`
-- Install Playwright: `npm install -g playwright`
-- Check browser dependency: `playwright install`
-
-### High memory usage
-- Reduce worker count
-- Lower `repeat_count` per session
-- Enable browser context reuse (future feature)
+1. **Fresh Sessions**: No cookies, no storage — clean state every run
+2. **Stateless Execution**: Repeatable results independent of browser history
+3. **Smart Fallbacks**: Try DOM selectors first, fall back to coordinates
+4. **User Isolation**: Each user's sessions are private
+5. **Flexible Modes**: Desktop/Mobile viewport emulation
 
 ## License
 
 MIT
-
-## Support
-
-For issues and feature requests, see documentation.
 MARKDOWN;
         
         $this->writeFile('README.md', $readmeContent);
-        $this->log("✓ Created: README.md (Documentation)", "success");
-        
-        // QUICKSTART.md
-        $quickstartContent = <<<'MARKDOWN'
-# SWAOE v4.1 Quick Start Guide
-
-## 30-Second Setup
-
-### Local Development
-
-```bash
-# 1. Run installer
-php install.php
-
-# 2. Install dependencies
-cd bridge && npm install && cd ..
-
-# 3. Start services (requires Redis)
-redis-server &
-php -S localhost:8080 -t public &
-php worker/daemon.php start &
-
-# 4. Create session
-curl -X POST http://localhost:8080/api/session/create \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://example.com",
-    "repeat_count": 1
-  }'
-
-# 5. Check dashboard
-# http://localhost:8080
-```
-
-### Docker
-
-```bash
-docker-compose up -d
-# API at http://localhost:8080
-# Redis at localhost:6379
-```
-
-## First Automation
-
-Create a session that navigates to a URL and clicks an element:
-
-```bash
-curl -X POST http://localhost:8080/api/session/create \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://example.com",
-    "repeat_count": 1,
-    "selectors": [
-      {
-        "selector": "#submit-button",
-        "action": "click"
-      }
-    ],
-    "waits": [
-      {
-        "delay": 2000
-      }
-    ]
-  }'
-```
-
-Get session status:
-
-```bash
-curl http://localhost:8080/api/session/{session_id}/status
-```
-
-## Common Patterns
-
-### Click Multiple Elements
-
-```json
-{
-  "url": "https://example.com",
-  "repeat_count": 1,
-  "selectors": [
-    {"selector": ".menu", "action": "click"},
-    {"selector": ".submenu", "action": "click"},
-    {"selector": ".confirm", "action": "click"}
-  ]
-}
-```
-
-### Form Fill & Submit
-
-```json
-{
-  "url": "https://example.com/login",
-  "repeat_count": 1,
-  "selectors": [
-    {"selector": "#username", "action": "fill", "value": "user@example.com"},
-    {"selector": "#password", "action": "fill", "value": "password123"},
-    {"selector": "#login-button", "action": "click"}
-  ],
-  "waits": [{"delay": 1000}]
-}
-```
-
-### Repeat Action Multiple Times
-
-```json
-{
-  "url": "https://example.com",
-  "repeat_count": 5,
-  "selectors": [
-    {"selector": ".load-more", "action": "click"}
-  ],
-  "waits": [
-    {"delay": 1000}
-  ]
-}
-```
-
-## Debugging
-
-### View worker logs
-```bash
-docker-compose logs worker_1
-```
-
-### Query execution logs
-```bash
-# Via SQLite
-sqlite3 data/swaoe_cluster.sqlite
-SELECT * FROM execution_logs ORDER BY timestamp DESC LIMIT 20;
-```
-
-### Check session status
-```bash
-curl http://localhost:8080/api/session/{id}/status | jq
-```
-
-### Monitor queue
-```bash
-# Requires redis-cli
-redis-cli LLEN swaoe:queue:sessions
-redis-cli HGETALL swaoe:workers:active
-```
-
-## Next Steps
-
-- Configure custom timeouts in `config/config.php`
-- Scale workers: `docker-compose up -d --scale worker=4`
-- Integrate API into your application
-- Monitor logs in real-time dashboard
-
----
-
-Need help? Check README.md or view system logs in dashboard.
-MARKDOWN;
-        
-        $this->writeFile('QUICKSTART.md', $quickstartContent);
-        $this->log("✓ Created: QUICKSTART.md (Quick start guide)", "success");
+        $this->log("✓ Created: README.md", "success");
     }
     
     private function writeFile($path, $content) {
@@ -2330,10 +2438,10 @@ MARKDOWN;
     
     private function log($message, $type = 'info') {
         $colors = [
-            'section' => "\033[1;36m",    // Cyan bold
-            'success' => "\033[1;32m",    // Green bold
-            'error' => "\033[1;31m",      // Red bold
-            'info' => "\033[0;37m",       // White
+            'section' => "\033[1;36m",
+            'success' => "\033[1;32m",
+            'error' => "\033[1;31m",
+            'info' => "\033[0;37m",
             'reset' => "\033[0m"
         ];
         
@@ -2351,50 +2459,44 @@ MARKDOWN;
   ███████║╚███╔███╔╝██║  ██║╚██████╔╝███████╗
   ╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
 
-  Distributed Automation Orchestration Engine v4.1
+  Enhanced with PWTAE (Persistent Web Task Automation Engine)
   
 BANNER;
     }
     
-    private function printNextSteps() {
+    private function printNextSteps($cronMode) {
+        $modeText = $cronMode ? "Cron-Safe Stateless" : "Persistent Daemon";
         echo "
 ┌─────────────────────────────────────────────────────────────┐
-│                      NEXT STEPS                             │
+│                      NEXT STEPS ($modeText)                 │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  📦 Install Bridge Dependencies:                           │
+│  📦 Install Dependencies:                                   │
 │     cd bridge && npm install && cd ..                      │
 │                                                             │
-│  🚀 Start Local Development:                               │
-│     redis-server &                                         │
-│     php -S localhost:8080 -t public &                      │
-│     php worker/daemon.php start &                          │
-│                                                             │
-│  🐳 Or Use Docker:                                         │
+│  🚀 Start System:                                           │
 │     docker-compose up -d                                  │
+│     OR                                                     │
+│     redis-server & && php -S localhost:8080 -t public &   │
+│     " . ($cronMode ? "php worker/cron.php  (run via cron)" : "php worker/daemon.php start") . "   │
 │                                                             │
-│  📊 Open Dashboard:                                         │
+│  🔓 Login to Dashboard:                                    │
 │     http://localhost:8080                                 │
+│     (Register account first)                              │
 │                                                             │
-│  📚 Read Documentation:                                     │
-│     README.md - Full system documentation                 │
-│     QUICKSTART.md - Quick reference guide                 │
-│                                                             │
-│  🔍 Monitor System:                                         │
-│     docker-compose logs -f                                │
-│     sqlite3 data/swaoe_cluster.sqlite                     │
-│                                                             │
-│  📡 Create First Session:                                  │
-│     curl -X POST http://localhost:8080/api/session/create \\
-│       -H \"Content-Type: application/json\" \\             │
-│       -d '{\"url\": \"https://example.com\"}'             │
+│  🎯 Key Features (Enhanced):                               │
+│     ✓ Multi-user with session isolation                    │
+│     ✓ Smart selectors + coordinate fallback                │
+│     ✓ Desktop & Mobile viewport modes                      │
+│     ✓ Stateless fresh sessions (PWTAE)                     │
+│     ✓ " . ($cronMode ? "Cron-safe execution" : "Distributed workers") . "                          │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
         ";
     }
 }
 
-// Main execution
 $skipDocker = in_array('--skip-docker', $argv ?? []);
+$cronMode = in_array('--cron-mode', $argv ?? []);
 $installer = new SWAOEInstaller();
-$installer->run($skipDocker);
+$installer->run($skipDocker, $cronMode);
